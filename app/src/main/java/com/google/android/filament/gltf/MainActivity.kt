@@ -1,20 +1,5 @@
-/*
- * Copyright (C) 2020 The Android Open Source Project
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
-
 package com.google.android.filament.gltf
+
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -23,6 +8,7 @@ import android.view.Choreographer
 import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.SurfaceView
+import com.google.android.filament.Skybox
 import com.google.android.filament.utils.KtxLoader
 import com.google.android.filament.utils.ModelViewer
 import com.google.android.filament.utils.Utils
@@ -31,118 +17,85 @@ import java.nio.ByteBuffer
 class MainActivity : Activity() {
 
     companion object {
-        // Load the library for the utility layer, which in turn loads gltfio and the Filament core.
-        init { Utils.init() }
+        init {
+            Utils.init()
+        }
     }
 
     private lateinit var surfaceView: SurfaceView
     private lateinit var choreographer: Choreographer
-    private val frameScheduler = FrameCallback()
     private lateinit var modelViewer: ModelViewer
-    private val doubleTapListener = DoubleTapListener()
-    private lateinit var doubleTapDetector: GestureDetector
 
-    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         surfaceView = SurfaceView(this).apply { setContentView(this) }
         choreographer = Choreographer.getInstance()
-
-        doubleTapDetector = GestureDetector(applicationContext, doubleTapListener)
-
         modelViewer = ModelViewer(surfaceView)
+        surfaceView.setOnTouchListener(modelViewer)
 
-        surfaceView.setOnTouchListener { _, event ->
-            modelViewer.onTouchEvent(event)
-            doubleTapDetector.onTouchEvent(event)
-            true
-        }
+//                loadGlb("DamagedHelmet")
+//                modelViewer.scene.skybox = Skybox.Builder().build(modelViewer.engine)
 
-        createRenderables()
-        createIndirectLight()
-
-        val dynamicResolutionOptions = modelViewer.view.dynamicResolutionOptions
-        dynamicResolutionOptions.enabled = true
-        modelViewer.view.dynamicResolutionOptions = dynamicResolutionOptions
-
-        val ssaoOptions = modelViewer.view.ambientOcclusionOptions
-        ssaoOptions.enabled = true
-        modelViewer.view.ambientOcclusionOptions = ssaoOptions
-
-        val bloomOptions = modelViewer.view.bloomOptions
-        bloomOptions.enabled = true
-        modelViewer.view.bloomOptions = bloomOptions
+        loadGltf("BusterDrone")
+        loadEnvironment("venetian_crossroads_2k")
     }
 
-    private fun createRenderables() {
-        val buffer = assets.open("models/BusterDrone.gltf").use { input ->
-            val bytes = ByteArray(input.available())
-            input.read(bytes)
-            ByteBuffer.wrap(bytes)
+    private fun loadEnvironment(ibl: String) {
+        // Create the indirect light source and add it to the scene.
+        var buffer = readAsset("envs/$ibl/${ibl}_ibl.ktx")
+        KtxLoader.createIndirectLight(modelViewer.engine, buffer).apply {
+            intensity = 50_000f
+            modelViewer.scene.indirectLight = this
         }
 
-        modelViewer.loadModelGltfAsync(buffer) { uri -> readCompressedAsset("models/$uri") }
+        // Create the sky box and add it to the scene.
+        buffer = readAsset("envs/$ibl/${ibl}_skybox.ktx")
+        KtxLoader.createSkybox(modelViewer.engine, buffer).apply {
+            modelViewer.scene.skybox = this
+        }
+    }
+
+    private fun loadGltf(name: String) {
+        val buffer = readAsset("models/${name}.gltf")
+        modelViewer.loadModelGltf(buffer) { uri -> readAsset("models/$uri") }
         modelViewer.transformToUnitCube()
     }
 
-    private fun createIndirectLight() {
-        val engine = modelViewer.engine
-        val scene = modelViewer.scene
-        val ibl = "default_env"
-        readCompressedAsset("envs/$ibl/${ibl}_ibl.ktx").let {
-            scene.indirectLight = KtxLoader.createIndirectLight(engine, it)
-            scene.indirectLight!!.intensity = 30_000.0f
-        }
-        readCompressedAsset("envs/$ibl/${ibl}_skybox.ktx").let {
-            scene.skybox = KtxLoader.createSkybox(engine, it)
-        }
-    }
-
-    private fun readCompressedAsset(assetName: String): ByteBuffer {
+    private fun readAsset(assetName: String): ByteBuffer {
         val input = assets.open(assetName)
         val bytes = ByteArray(input.available())
         input.read(bytes)
         return ByteBuffer.wrap(bytes)
     }
 
+    private val frameCallback = object : Choreographer.FrameCallback {
+        private val startTime = System.nanoTime()
+        override fun doFrame(currentTime: Long) {
+            val seconds = (currentTime - startTime).toDouble() / 1_000_000_000
+            choreographer.postFrameCallback(this)
+            modelViewer.animator?.apply {
+                if (animationCount > 0) {
+                    applyAnimation(0, seconds.toFloat())
+                }
+                updateBoneMatrices()
+            }
+            modelViewer.render(currentTime)
+        }
+    }
+
     override fun onResume() {
         super.onResume()
-        choreographer.postFrameCallback(frameScheduler)
+        choreographer.postFrameCallback(frameCallback)
     }
 
     override fun onPause() {
         super.onPause()
-        choreographer.removeFrameCallback(frameScheduler)
+        choreographer.removeFrameCallback(frameCallback)
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        choreographer.removeFrameCallback(frameScheduler)
-    }
-
-    inner class FrameCallback : Choreographer.FrameCallback {
-        private val startTime = System.nanoTime()
-        override fun doFrame(frameTimeNanos: Long) {
-            choreographer.postFrameCallback(this)
-
-            modelViewer.animator?.apply {
-                if (animationCount > 0) {
-                    val elapsedTimeSeconds = (frameTimeNanos - startTime).toDouble() / 1_000_000_000
-                    applyAnimation(0, elapsedTimeSeconds.toFloat())
-                }
-                updateBoneMatrices()
-            }
-
-            modelViewer.render(frameTimeNanos)
-        }
-    }
-
-    // Just for testing purposes, this releases the model and reloads it.
-    inner class DoubleTapListener : GestureDetector.SimpleOnGestureListener() {
-        override fun onDoubleTap(e: MotionEvent?): Boolean {
-            modelViewer.destroyModel()
-            createRenderables()
-            return super.onDoubleTap(e)
-        }
+        choreographer.removeFrameCallback(frameCallback)
     }
 }
+

@@ -11,10 +11,7 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:supportsRtl="true"
       android:theme="@style/AppTheme">
-    <activity android:name="com.google.android.filament.gltf.MainActivity">
-    </activity>
-
-    <activity android:name="com.google.android.filament.gltf.SampleActivity"
+    <activity android:name="com.google.android.filament.gltf.MainActivity"
         android:screenOrientation="fullSensor"
         android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
       <intent-filter>
@@ -23,7 +20,6 @@
         <category android:name="android.intent.category.LAUNCHER"/>
       </intent-filter>
     </activity>
-
   </application>
 
 </manifest>
